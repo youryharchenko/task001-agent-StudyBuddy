@@ -1,13 +1,8 @@
 import chromadb
 from langchain_core.tools import tool
 
-chroma_client = chromadb.Client()
-knowledge_base = chroma_client.create_collection("domain_knowledge")
-
-documents = []
-
-doc_ids = [f"doc_{i}" for i in range(len(documents))]
-knowledge_base.add(documents=documents, ids=doc_ids)
+chroma_client = chromadb.PersistentClient(path="./chroma_db")
+knowledge_base = chroma_client.get_collection("domain_knowledge")
 
 
 @tool("search_templates")
@@ -25,5 +20,8 @@ def search_templates(query: str) -> str:
     """
 
     results = knowledge_base.query(query_texts=[query], n_results=3)
-    docs = results["documents"][0]
-    return "\n---\n".join(docs)
+    if results["documents"]:
+        docs = results["documents"][0]
+        return "\n---\n".join(docs)
+    else:
+        return "не знайдено релевантних документів"

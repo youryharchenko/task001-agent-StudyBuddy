@@ -8,6 +8,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
+from kb import knowledge_base
 from logger import TrajectoryLogger
 from plan import Plan
 
@@ -56,7 +57,15 @@ llm = ChatOllama(
     base_url=f"http://{OLLAMA_SERVER_IP}:11434",
     client_kwargs={"timeout": TIMEOUT_SEC},
 )
+
+
+available_tools = []
+llm_with_tools = llm.bind_tools(available_tools, tool_choice="any")
 llm_planner = llm.with_structured_output(Plan)
+risk_tools = []
+
+
+tools_by_name = {t.name: t for t in available_tools}
 
 
 def dispatch_node(
@@ -83,6 +92,13 @@ def plan_node(
 
     topic_id = state.get("topic_id", "невідома тема")
     topic = state.get("topic", "невідома тема")
+
+    results = knowledge_base.query(query_texts=[topic], n_results=3)
+    context = ""
+    if results["documents"]:
+        docs = results["documents"][0]
+        context = f"КОНТЕКСТ:\n{'\n---\n'.join(docs)}"
+
     prompt = [
         SystemMessage(
             content=(
@@ -95,7 +111,8 @@ def plan_node(
                 "Крок 2. Невизначеності\n"
                 "Крок 3. Методи обчислення границь\n"
                 "Крок 4. Чудові границі\n"
-                "Крок 5. Правило Лопіталя\n"
+                "Крок 5. Правило Лопіталя\n\n"
+                f"{context}"
             )
         ),
         HumanMessage(content=f"Тема: '{topic_id}'"),
@@ -103,7 +120,7 @@ def plan_node(
 
     plan_obj: Plan = cast(Plan, llm_planner.invoke(prompt))
 
-    print(f"planner_node - plan: {plan_obj}")
+    # print(f"planner_node - plan: {plan_obj}")
 
     # print(f"planner_node - return: {result}")
 
@@ -111,6 +128,7 @@ def plan_node(
         goto="generator",
         update={
             "task_type": "gener",
+            "goal": plan_obj.goal,
             "plan": plan_obj.steps,
             "current_step_idx": 0,
             "past_steps": [f"Складено план з {len(plan_obj.steps)} кроків."],

@@ -45,17 +45,20 @@ if __name__ == "__main__":
         if state.values and state.next:
             # Випадок 1: Стан є і граф НЕ завершений (є наступний вузол)
             print(
-                "🔄 Знайдено незавершений стан! Відновлюємо виконання з вузла:",
-                state.next,
+                "🔄 Знайдено незавершений стан!\n",
+                # "Відновлюємо виконання з вузла:",
+                # state.next,
             )
-            print("Поточні дані:", state.values)
+            print("Поточний стан:\n", state)
 
             # Передаємо None, щоб продовжити з місця зупинки
-            final_output = app.invoke(None, config=config)
+            # final_output = app.invoke(None, config=config)
+            #
         elif state.values and not state.next:
             # Випадок 2: Стан є, але граф вже повністю завершив роботу раніше
             print("✅ Ця сесія вже була успішно завершена раніше.")
-            final_output = state.values
+            print("Кінцевий стан:", state)
+            # final_output = state.values
 
         else:
             # Випадок 3: Нова сесія (збереженого стану немає)
