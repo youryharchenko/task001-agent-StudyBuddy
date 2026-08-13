@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
+from pydantic import BaseModel
 
 
 class TrajectoryLogger(BaseCallbackHandler):
@@ -23,7 +24,10 @@ class TrajectoryLogger(BaseCallbackHandler):
 
         self.steps.append(log_entry)
         with open(self.filepath, "w", encoding="utf-8") as f:
-            f.write(json.dumps(self.steps, ensure_ascii=False, indent=2) + "\n\n")
+            f.write(
+                json.dumps(self.steps, ensure_ascii=False, indent=2, default=str)
+                + "\n\n"
+            )
 
     # --- Відстеження Chain / Node ---
     def on_chain_start(
@@ -117,13 +121,39 @@ class TrajectoryLogger(BaseCallbackHandler):
         self._write_log(log_entry)
 
     def _clean_data(self, data: Any) -> Any:
-        """Серіалізатор для об'єктів, які не конвертуються в JSON за замовчуванням."""
-        try:
-            # Намагаємося просто дампити, якщо об'єкт базовий
-            json.dumps(data)
-            return data
-        except (TypeError, OverflowError):
-            # Перетворюємо складні об'єкти (LangChain Messages тощо) у dict або str
+        """Рекурсивно очищає та конвертує об'єкти (включаючи Pydantic V1/V2,
+
+        LangChain Messages) у JSON-сумісні типи.
+        """
+        # 1. Якщо це Pydantic модель (включаючи вашу Gener)
+        if isinstance(data, BaseModel):
+            if hasattr(data, "model_dump"):
+                # Pydantic V2: mode="json" гарантує серіалізацію вкладених дат/UUID тощо
+                return self._clean_data(data.model_dump(mode="json"))
+            return self._clean_data(data.dict())  # Pydantic V1
+
+        # 2. Якщо це об'єкт LangChain (наприклад AIMessage, HumanMessage)
+        if hasattr(data, "lc_kwargs"):
+            # Або стандартний .dict() для LangChain об'єктів
             if hasattr(data, "dict"):
-                return data.dict()
-            return str(data)
+                return self._clean_data(data.dict())
+
+        # 3. Якщо це словник — очищаємо ключі та значення рекурсивно
+        if isinstance(data, dict):
+            return {
+                str(k): self._clean_data(v)
+                for k, v in data.items()
+                # Ігноруємо приватні поля, якщо вони є у внутрішніх станах
+                if not str(k).startswith("_")
+            }
+
+        # 4. Якщо це список або кортеж — рекурсивно обробляємо кожен елемент
+        if isinstance(data, (list, tuple, set)):
+            return [self._clean_data(item) for item in data]
+
+        # 5. Базові JSON-сумісні типи повертаємо як є
+        if isinstance(data, (str, int, float, bool, type(None))):
+            return data
+
+        # 6. Все інше (кастомні класи, об'єкти без dict, UUID тощо) кастимо в str
+        return str(data)

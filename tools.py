@@ -1,7 +1,12 @@
-from typing import Literal
+from typing import Literal, cast
 
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from pydantic import BaseModel, ConfigDict, Field
+
+from kb import knowledge_base
+from llm import llm
+from plan import Gener
 
 
 class GenerateQuestionInput(BaseModel):
@@ -18,7 +23,7 @@ class GenerateQuestionInput(BaseModel):
 @tool("generate_question", args_schema=GenerateQuestionInput)
 def generate_question(
     topic: str, difficulty: Literal["низька", "середня", "висока"]
-) -> str:
+) -> Gener:
     """
     Генерує тестове питання на задану тему вказаної складності.
 
@@ -30,7 +35,38 @@ def generate_question(
     Returns:
          str "Тестове питання"
     """
-    return "Це має бути тестове питання."
+
+    kb_results = knowledge_base.query(query_texts=[topic], n_results=3)
+    context = ""
+    if kb_results["documents"]:
+        docs = kb_results["documents"][0]
+        context = f"КОНТЕКСТ:\n{'\n---\n'.join(docs)}"
+
+    prompt = [
+        SystemMessage(
+            content=(
+                "Ти — досвідчений викладач вищої математики.\n\n"
+                # "Користуйся інструментом 'search_info'"
+                f"{context}\n\n"
+                f"Твоє завдання: згенерувати 1 якісне контрольне питання та детальну еталонну відповідь "
+                f"до теми: '{topic}', складність: '{difficulty}'.\n\n"
+                "Вимоги:\n"
+                "1. 'question' має бути конкретним математичним питанням чи задачею (НЕ заголовком).\n"
+                "2. 'answer' МУСИТЬ містити повне розв'язання чи математичне пояснення (не залишай порожнім!).\n\n"
+                "ПРИКЛАД ЯКІСНОГО ВИВОДУ:\n"
+                "Topic: Вектори в R^n\n"
+                "Question: Дано вектори u = (1, 2) та v = (-3, 1). Знайдіть результат лінійної комбінації 2u - v та поясніть її геометричний зміст.\n"
+                "Answer: 2u - v = 2*(1, 2) - (-3, 1) = (2, 4) + (3, -1) = (5, 3). Геометрично це відповідає додаванню вектора 2u та протилежного вектора до v за правилом паралелограма."
+            )
+        ),
+        HumanMessage(content=f"Склади питаня до теми: '{topic}'"),
+    ]
+
+    llm_generator = llm.with_structured_output(Gener)
+
+    gener: Gener = cast(Gener, llm_generator.invoke(prompt))
+
+    return gener
 
 
 class CheckAnswerInput(BaseModel):

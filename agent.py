@@ -6,11 +6,14 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.prebuilt import ToolNode
 from langgraph.types import Command
 
 from kb import knowledge_base, search_info
+from llm import llm
 from logger import TrajectoryLogger
 from plan import Gener, Plan
+from tools import generate_question
 
 
 class PlanState(TypedDict):
@@ -38,31 +41,13 @@ class PlanState(TypedDict):
 MAX_ITERATIONS = 3  # Максимальна кількість спроб Generator <-> Evaluator
 MAX_EVAL_STEPS = 5  # Захист max_steps для внутрішнього циклу Evaluator
 
-# ==========================================
-# 2. НАЛАШТУВАННЯ МОДЕЛЕЙ
-# ==========================================
-# MODEL_NAME = "qwen2.5-coder:7b"
-# MODEL_NAME = "qwen3.5:9b"
-MODEL_NAME = "gemma4:e4b"
-# MODEL_NAME = "qwen2.5-coder:14b"
-OLLAMA_SERVER_IP = "192.168.2.102"
 
-TIMEOUT_SEC = 60  # Загальний тайм-аут у секундах
+available_tools = [generate_question]
+tool_node = ToolNode(available_tools)
 
-llm = ChatOllama(
-    model=MODEL_NAME,
-    temperature=0.1,
-    num_predict=8192,
-    # reasoning=False,
-    base_url=f"http://{OLLAMA_SERVER_IP}:11434",
-    client_kwargs={"timeout": TIMEOUT_SEC},
-)
-
-
-available_tools = [search_info]
 llm_with_tools = llm.bind_tools(available_tools, tool_choice="any")
 llm_planner = llm.with_structured_output(Plan)
-llm_generator = llm.with_structured_output(Gener)
+
 risk_tools = []
 
 
@@ -160,33 +145,15 @@ def gener_node(
 
     current_step = plan[current_step_idx]
 
-    kb_results = knowledge_base.query(query_texts=[topic, current_step], n_results=3)
-    context = ""
-    if kb_results["documents"]:
-        docs = kb_results["documents"][0]
-        context = f"КОНТЕКСТ:\n{'\n---\n'.join(docs)}"
-
-    prompt = [
-        SystemMessage(
-            content=(
-                "Ти — досвідчений викладач вищої математики.\n\n"
-                # "Користуйся інструментом 'search_info'"
-                f"{context}\n\n"
-                f"Твоє завдання: згенерувати 1 якісне контрольне питання та детальну еталонну відповідь "
-                f"до теми: '{topic}', а саме для кроку: '{current_step}'.\n\n"
-                "Вимоги:\n"
-                "1. 'question' має бути конкретним математичним питанням чи задачею (НЕ заголовком).\n"
-                "2. 'answer' МУСИТЬ містити повне розв'язання чи математичне пояснення (не залишай порожнім!).\n\n"
-                "ПРИКЛАД ЯКІСНОГО ВИВОДУ:\n"
-                "Topic: Вектори в R^n\n"
-                "Question: Дано вектори u = (1, 2) та v = (-3, 1). Знайдіть результат лінійної комбінації 2u - v та поясніть її геометричний зміст.\n"
-                "Answer: 2u - v = 2*(1, 2) - (-3, 1) = (2, 4) + (3, -1) = (5, 3). Геометрично це відповідає додаванню вектора 2u та протилежного вектора до v за правилом паралелограма."
-            )
+    gener: Gener = cast(
+        Gener,
+        generate_question.invoke(
+            {
+                "topic": f"{topic}\n{current_step}",
+                "difficulty": "середня",
+            }
         ),
-        HumanMessage(content=f"Склади питаня до теми: '{current_step}'"),
-    ]
-
-    gener: Gener = cast(Gener, llm_generator.invoke(prompt))
+    )
     results.append(
         {"topic": gener.topic, "question": gener.question, "answer": gener.answer}
     )
