@@ -5,8 +5,8 @@ chroma_client = chromadb.PersistentClient(path="./chroma_db")
 knowledge_base = chroma_client.get_collection("domain_knowledge")
 
 
-@tool("search_templates")
-def search_templates(query: str) -> str:
+@tool("search_info")
+def search_info(query: str) -> str:
     """Пошук інформації у базі знань.
 
     Використовуйте цей інструмент,
