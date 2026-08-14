@@ -4,7 +4,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from pydantic import BaseModel, ConfigDict, Field
 
-from kb import knowledge_base
+from kb import knowledge_base, search_info
 from llm import llm
 from plan import Gener
 
@@ -95,7 +95,34 @@ def check_answer(question: str, student_answer: str, correct_answer: str) -> str
          str "Оцінка відповіді студента"
     """
 
-    return "Це має бути оцінка відповіді студента."
+    kb_results = knowledge_base.query(query_texts=[question], n_results=3)
+    context = ""
+    if kb_results["documents"]:
+        docs = kb_results["documents"][0]
+        context = f"КОНТЕКСТ:\n{'\n---\n'.join(docs)}"
+
+    prompt = [
+        SystemMessage(
+            content=(
+                "Ти — досвідчений викладач вищої математики.\n\n"
+                # "Користуйся інструментом 'search_info'"
+                f"{context}\n\n"
+                f"Твоє завдання: перевірити якість відповіді студента на питання "
+                f"Питання: '{question}'.\n\n"
+                f"Відповідь студента: '{student_answer}'.\n\n"
+                "Вимоги:\n"
+                "Оцінка має бути з переліку: 'незадовільно', 'задовільно', 'добре', 'відмінно'\n"
+            )
+        ),
+        HumanMessage(
+            content=f"Дай оцінку відповіді на питаня: 'питання: {question}, відповідь студента: '{student_answer}'"
+        ),
+    ]
+
+    # llm_evaluator = llm.bind_tools([search_info])
+    # ai_mess = llm_evaluator.invoke(prompt)
+    ai_mess = llm.invoke(prompt)
+    return str(ai_mess.content)
 
 
 class ExplainConceptInput(BaseModel):

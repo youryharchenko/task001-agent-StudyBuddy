@@ -1,3 +1,4 @@
+import json
 import operator
 import sqlite3
 from typing import Annotated, List, Literal, Optional, TypedDict, cast
@@ -13,7 +14,7 @@ from kb import knowledge_base, search_info
 from llm import llm
 from logger import TrajectoryLogger
 from plan import Gener, Plan
-from tools import generate_question
+from tools import check_answer, generate_question
 
 
 class PlanState(TypedDict):
@@ -126,7 +127,7 @@ def gener_node(
     state: PlanState,
 ) -> Command[Literal["planner", "generator", "evaluator", "helper"]]:
     """Генерує питання на задану тему."""
-    topic_id = state.get("topic_id", "невідома тема")
+    # topic_id = state.get("topic_id", "невідома тема")
     topic = state.get("topic", "невідома тема")
     current_step_idx = state.get("current_step_idx", 0)
     completed = state.get("completed", 0)
@@ -141,6 +142,11 @@ def gener_node(
 
     if completed == total_steps:
         print("План виконано")
+        with open("questions.json", "w", encoding="utf-8") as f:
+            f.write(
+                json.dumps(results, ensure_ascii=False, indent=2, default=str) + "\n\n"
+            )
+            print("Список питань збережено в файлі 'questions.json'")
         return Command(goto="evaluator", update={"task_type": "eval"})
 
     current_step = plan[current_step_idx]
@@ -172,16 +178,51 @@ def gener_node(
 
 def eval_node(
     state: PlanState,
-) -> Command[Literal["generator", "helper"]]:
+) -> Command[Literal["evaluator", "helper", END]]:
     """Перевіряє відповідь студента."""
-    return Command(goto="generator", update={"task_type": "gener"})
+
+    results = state.get("results", [])
+
+    for item in results:
+        if item.get("checked", False):
+            print(f"Питання перевірене:\n'{item['question']}'\n")
+            continue
+
+        print(f"Перевіряємо питання '{item['question']}'")
+        check = check_answer.invoke(
+            {
+                "question": item.get("question", "невідоме питання"),
+                "student_answer": item.get("answer", "невідома відповідь"),
+                "correct_answer": item.get("answer", "невідома відповідь"),
+            }
+        )
+        item["checked"] = True
+        item["rate"] = str(check)
+
+        with open("questions.json", "w", encoding="utf-8") as f:
+            f.write(
+                json.dumps(results, ensure_ascii=False, indent=2, default=str) + "\n\n"
+            )
+            print("Список питань збережено в файлі 'questions.json'")
+
+        return Command(
+            goto="evaluator",
+            update={
+                "task_type": "eval",
+                "results": results,
+            },
+        )
+    else:
+        print("Всі питання перевірено")
+
+        return Command(goto="helper", update={"task_type": "help"})
 
 
 def help_node(
     state: PlanState,
-) -> Command[Literal["generator", "evaluator"]]:
+) -> Command[Literal["helper"]]:
     """Робить пояснення відповідей."""
-    return Command(goto="generator", update={"task_type": "gener"})
+    return Command(goto="helper", update={"task_type": "help"})
 
 
 conn = sqlite3.connect("agent_state.db", check_same_thread=False)
@@ -201,5 +242,5 @@ plan_workflow.add_edge(START, "dispatcher")
 logger_callback = TrajectoryLogger()
 
 app = plan_workflow.compile(
-    checkpointer=saver, interrupt_after=["planner", "generator"]
+    checkpointer=saver, interrupt_after=["planner", "generator", "evaluator", "helper"]
 )
