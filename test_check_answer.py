@@ -11,7 +11,7 @@ TASK_TYPE = "plan"
 TOPIC = "Лінійна алгебра. Вектори."
 
 if __name__ == "__main__":
-    print(f"🚀 Тест - Генерація питань - Студент: {STUDENT_ID} - Тема: {TOPIC_ID}")
+    print(f"🚀 Тест - Перевірка відповідей - Студент: {STUDENT_ID} - Тема: {TOPIC_ID}")
 
     thread_id = f"{STUDENT_ID}/{TOPIC_ID}"
 

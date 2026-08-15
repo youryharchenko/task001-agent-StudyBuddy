@@ -1,8 +1,9 @@
+import re
 from typing import Literal, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from kb import knowledge_base, search_info
 from llm import llm
@@ -12,12 +13,32 @@ from plan import Gener
 class GenerateQuestionInput(BaseModel):
     """Схема валідації вхідних даних для генерації тестових питань."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
 
-    topic: str = Field(..., description="Тема тестового питання")
+    topic: str = Field(
+        ..., min_length=3, max_length=150, description="Тема тестового питання"
+    )
     difficulty: Literal["низька", "середня", "висока"] = Field(
         "середня", description="Рівень складності тестового питання"
     )
+
+    @field_validator("topic")
+    @classmethod
+    def validate_topic(cls, value: str) -> str:
+        # 1. Захист від порожніх рядків після стрипингу
+        if not value:
+            raise ValueError("Тема питання не може бути порожньою.")
+
+        # 2. Перевірка на символи (control characters / newlines), які можуть ламати промпт
+        # if re.search(r"[\r\n\t\x00-\x1f]", value):
+        #    raise ValueError(
+        #        "Тема не повинна містити переносів рядків або спецсимволів."
+        #    )
+
+        return value
 
 
 @tool("generate_question", args_schema=GenerateQuestionInput)
@@ -74,11 +95,30 @@ class CheckAnswerInput(BaseModel):
     Схема валідації вхідних даних для перевірки відповіді.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
 
-    question: str = Field(..., description="Тестове питання")
-    student_answer: str = Field(..., description="Відповідь студента на питання")
-    correct_answer: str = Field(..., description="Правильна відповідь на питання")
+    question: str = Field(
+        ..., min_length=5, max_length=2000, description="Тестове питання"
+    )
+    student_answer: str = Field(
+        ..., min_length=5, max_length=5000, description="Відповідь студента на питання"
+    )
+    correct_answer: str = Field(
+        ..., min_length=5, max_length=5000, description="Правильна відповідь на питання"
+    )
+
+    @field_validator("student_answer")
+    @classmethod
+    def validate_student_answer(cls, value: str) -> str:
+        """Валідація та санітизація відповіді студента."""
+        cleaned_value = value.strip()
+
+        # 1. Обробка відсутності відповіді або коротких маркерів
+        if not cleaned_value or cleaned_value in {"-", "не знаю", "no answer"}:
+            return "Студент не надав відповіді."
 
 
 @tool("check_answer", args_schema=CheckAnswerInput)
@@ -130,7 +170,10 @@ class ExplainConceptInput(BaseModel):
     Схема валідації вхідних даних для пояснення концепції.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
 
     concept: str = Field(..., description="Концепція")
     level: Literal["коротко", "детально"] = Field(
@@ -159,7 +202,10 @@ class SubmitGradeInput(BaseModel):
     Схема валідації вхідних даних для виставлення оцінки в LMS.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
 
     student_id: str = Field(..., description="Ідентифікатор студента")
     assignment: str = Field(..., description="Ідентифікатор практичної роботи")
@@ -186,4 +232,4 @@ def submit_grade(
         str "Результат виставлення оцінки."
     """
 
-    return "Результат виставлення оцінки."
+    return "задовільно"

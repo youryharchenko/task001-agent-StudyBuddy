@@ -34,17 +34,18 @@ class PlanState(TypedDict):
         List[str], operator.add
     ]  # Історія виконаних дій та результатів
     current_step_idx: int  # Індекс поточного кроку
+    tool_call_count: int  # Кількість викликів інструменту
 
 
 # ==========================================
 # ЗАХИСНІ КОНФІГУРАЦІЇ
 # ==========================================
-MAX_ITERATIONS = 3  # Максимальна кількість спроб Generator <-> Evaluator
+MAX_ITERATIONS = 2  # Максимальна кількість викликів інструменту
 MAX_EVAL_STEPS = 5  # Захист max_steps для внутрішнього циклу Evaluator
 
 
-available_tools = [generate_question]
-tool_node = ToolNode(available_tools)
+available_tools = [search_info]
+# tool_node = ToolNode(available_tools)
 
 llm_with_tools = llm.bind_tools(available_tools, tool_choice="any")
 llm_planner = llm.with_structured_output(Plan)
@@ -52,7 +53,7 @@ llm_planner = llm.with_structured_output(Plan)
 risk_tools = []
 
 
-tools_by_name = {t.name: t for t in available_tools}
+# tools_by_name = {t.name: t for t in available_tools}
 
 
 def dispatch_node(
@@ -218,11 +219,57 @@ def eval_node(
         return Command(goto="helper", update={"task_type": "help"})
 
 
+def submit_node(
+    state: PlanState,
+) -> Command[Literal["submitter", "helper", END]]:
+    """Підтверджує оцінки виставлені агентом."""
+
+    # Тут має бути логіка взаємодії з викладачем та LMS
+    #
+
+    return Command(goto="submitter")
+
+
 def help_node(
     state: PlanState,
-) -> Command[Literal["helper"]]:
-    """Робить пояснення відповідей."""
-    return Command(goto="helper", update={"task_type": "help"})
+) -> Command[Literal["tools", END]]:
+    """Робить пояснення концепцій."""
+
+    tool_call_count = state.get("tool_call_count", 0)
+
+    if tool_call_count > MAX_ITERATIONS:
+        print(f"Кількість викликів досягла межі {tool_call_count}")
+        return Command(goto=END, update={"tool_call_count": 0})
+
+    messages = state.get("messages", [])
+
+    if not messages:
+        print("Нема запитів до консультанта")
+        return Command(goto=END)
+
+    prompt = [
+        SystemMessage(
+            content=(
+                "Ти — досвідчений викладач вищої математики.\n\n"
+                "ОБОВ'ЯЗКОВО. Користуйся інструментом 'search_info'"
+                # f"{context}\n\n"
+                f"Твоє завдання: Пояснити поняття, які наведені в питанні."
+                f"Питання: '{messages[0]}'.\n\n"
+            )
+        ),
+        HumanMessage(content=f"Дай пояснення на питаня: {messages[0]}"),
+    ]
+
+    response = llm_with_tools.invoke(prompt)
+
+    # Визначаємо наступний крок
+    if response.tool_calls:
+        return Command(
+            goto="tools",
+            update={"messages": [response], "tool_call_count": tool_call_count + 1},
+        )
+    else:
+        return Command(goto=END)
 
 
 conn = sqlite3.connect("agent_state.db", check_same_thread=False)
@@ -235,12 +282,19 @@ plan_workflow.add_node("planner", plan_node)
 plan_workflow.add_node("generator", gener_node)
 plan_workflow.add_node("evaluator", eval_node)
 plan_workflow.add_node("helper", help_node)
+plan_workflow.add_node("submitter", submit_node)
 
 
 plan_workflow.add_edge(START, "dispatcher")
 
+tool_node = ToolNode([search_info])
+plan_workflow.add_node("tools", tool_node)
+plan_workflow.add_edge("tools", "helper")
+
 logger_callback = TrajectoryLogger()
 
 app = plan_workflow.compile(
-    checkpointer=saver, interrupt_after=["planner", "generator", "evaluator", "helper"]
+    checkpointer=saver,
+    interrupt_after=["planner", "generator", "evaluator"],
+    interrupt_before=["submitter"],
 )
